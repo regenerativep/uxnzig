@@ -4,20 +4,7 @@ const uxn = @import("uxn.zig");
 const devSystem = @import("devices/system.zig");
 const devDatetime = @import("devices/datetime.zig");
 const devFile = @import("devices/file.zig");
-
-fn consoleDeo(ctx: uxn.DeviceContext, device: *uxn.Device, port: u8) void {
-    _ = ctx;
-    var file = switch (port) {
-        0x8 => std.io.getStdOut(),
-        0x9 => std.io.getStdErr(),
-        else => return,
-    };
-    // TODO: do we want to use the mutex for stderr?
-    file.writer().writeByte(device.data[port]) catch |e| std.debug.panic("std err or out error :( : {any}", .{e});
-    // i dont think we need to flush here?
-}
-
-const console_device = .{ .deo = consoleDeo };
+const devConsole = @import("devices/console.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -33,6 +20,8 @@ pub fn main() !void {
     defer alloc.free(ram);
     std.mem.set(u8, ram, 0);
 
+    var console = devConsole.UxnConsole{};
+    defer console.close();
     var file0 = devFile.UxnFile{};
     defer file0.close();
     var file1 = devFile.UxnFile{};
@@ -41,8 +30,8 @@ pub fn main() !void {
     var u = uxn.Uxn{
         .ram = ram,
         .dev = [_]uxn.Device{
-            devSystem.system_device, //0x00
-            console_device, //0x01
+            devSystem.device, //0x00
+            console.device(), //0x01
             .{}, //0x02
             .{}, //0x03
             .{}, //0x04
@@ -51,9 +40,9 @@ pub fn main() !void {
             .{}, //0x07
             .{}, //0x08
             .{}, //0x09
-            file0.getDevice(), //0x0a
-            file1.getDevice(), //0x0b
-            devDatetime.datetime_device, //0x0c
+            file0.device(), //0x0a
+            file1.device(), //0x0b
+            devDatetime.device, //0x0c
             .{}, //0x0d
             .{}, //0x0e
             .{}, //0x0f

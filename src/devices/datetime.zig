@@ -4,8 +4,8 @@ const time = @import("../vendor/time.zig");
 
 const uxn = @import("../uxn.zig");
 
-pub fn datetimeDei(ctx: uxn.DeviceContext, device: *uxn.Device, port: u8) u8 {
-    _ = ctx;
+pub fn datetimeDei(u: *uxn.Uxn, dev: *uxn.Device, port: u8) u8 {
+    _ = u;
     const tm = time.DateTime.now();
     return switch (port) {
         0x0 => @truncate(u8, tm.years >> 8),
@@ -19,7 +19,7 @@ pub fn datetimeDei(ctx: uxn.DeviceContext, device: *uxn.Device, port: u8) u8 {
         0x8 => @truncate(u8, tm.dayOfThisYear() >> 8),
         0x9 => @truncate(u8, tm.dayOfThisYear()),
         0xa => 0, // TODO: obtain daylight savings info
-        else => device.data[port],
+        else => dev.data[port],
     };
 }
-pub const datetime_device = uxn.Device{ .dei = datetimeDei };
+pub const device = uxn.Device{ .dei = datetimeDei };

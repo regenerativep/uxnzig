@@ -4,8 +4,6 @@ const fmt = std.fmt;
 
 const uxn = @import("../uxn.zig");
 
-pub const DevFile0 = 0xa;
-
 fn copyCorrect(comptime T: type, dest: []T, source: []const T) void {
     if (@ptrToInt(dest.ptr) < @ptrToInt(source.ptr)) {
         std.mem.copy(T, dest, source);
@@ -54,7 +52,7 @@ pub const UxnFile = struct {
             .state = .idle,
         };
     }
-    pub fn getDevice(self: *Self) uxn.Device {
+    pub fn device(self: *Self) uxn.Device {
         return .{
             .dei = fileDei,
             .deo = fileDeo,
@@ -129,14 +127,14 @@ pub const UxnFile = struct {
         return out_buffer[0..ind];
     }
 
-    fn fileDeo(ctx: uxn.DeviceContext, device: *uxn.Device, port: u8) void {
-        var file = @ptrCast(*Self, @alignCast(@alignOf(Self), device.state));
+    fn fileDeo(u: *uxn.Uxn, dev: *uxn.Device, port: u8) void {
+        var file = @ptrCast(*Self, @alignCast(@alignOf(Self), dev.state));
         var res: u16 = 0;
         switch (port) {
             0x5 => { // stat file
-                const addr = device.peek16(0x4);
-                const len = device.peek16(0xa);
-                const out_buffer = ctx.uxn.ram[addr..std.math.min(addr + len, ctx.uxn.ram.len)];
+                const addr = dev.peek16(0x4);
+                const len = dev.peek16(0xa);
+                const out_buffer = u.ram[addr..std.math.min(addr + len, u.ram.len)];
                 const result = getEntry(out_buffer, file.filename.slice(), file.basename(), true);
                 res = if (result) |written| @truncate(u16, written.len) else |_| 0;
             },
@@ -146,17 +144,17 @@ pub const UxnFile = struct {
                 res = @boolToInt(std.meta.isError(result));
             },
             0x9 => { // specify filename
-                const addr = device.peek16(0x8);
+                const addr = dev.peek16(0x8);
                 file.filename = .{};
-                if (std.mem.indexOfScalarPos(u8, ctx.uxn.ram, addr, 0)) |endaddr| {
-                    file.filename = Filename.fromSlice(ctx.uxn.ram[addr..endaddr]) catch .{};
+                if (std.mem.indexOfScalarPos(u8, u.ram, addr, 0)) |endaddr| {
+                    file.filename = Filename.fromSlice(u.ram[addr..endaddr]) catch .{};
                 }
                 res = 0;
             },
             0xd => { // read file
-                const addr = device.peek16(0xc);
-                const len = device.peek16(0xa);
-                const out_buffer = ctx.uxn.ram[addr..std.math.min(addr + len, ctx.uxn.ram.len)];
+                const addr = dev.peek16(0xc);
+                const len = dev.peek16(0xa);
+                const out_buffer = u.ram[addr..std.math.min(addr + len, u.ram.len)];
                 if (file.state != .file_read and file.state != .dir_read) {
                     file.close();
                     file.openForRead() catch {};
@@ -173,12 +171,12 @@ pub const UxnFile = struct {
                 }
             },
             0xf => { // write file
-                const addr = device.peek16(0xe);
-                const len = device.peek16(0xa);
-                const in_buffer = ctx.uxn.ram[addr..std.math.min(addr + len, ctx.uxn.ram.len)];
+                const addr = dev.peek16(0xe);
+                const len = dev.peek16(0xa);
+                const in_buffer = u.ram[addr..std.math.min(addr + len, u.ram.len)];
                 if (file.state != .file_write) {
                     file.close();
-                    file.openForWrite((device.data[0x7] & 0x01) != 0) catch {};
+                    file.openForWrite((dev.data[0x7] & 0x01) != 0) catch {};
                 }
                 if (file.state == .file_write) {
                     const result = file.file.?.writeAll(in_buffer);
@@ -187,12 +185,12 @@ pub const UxnFile = struct {
             },
             else => {},
         }
-        device.poke16(0x2, res);
+        dev.poke16(0x2, res);
     }
 
-    fn fileDei(ctx: uxn.DeviceContext, device: *uxn.Device, port: u8) u8 {
-        _ = ctx;
-        var file = @ptrCast(*Self, @alignCast(@alignOf(Self), device.state));
+    fn fileDei(u: *uxn.Uxn, dev: *uxn.Device, port: u8) u8 {
+        _ = u;
+        var file = @ptrCast(*Self, @alignCast(@alignOf(Self), dev.state));
         switch (port) {
             0xc, 0xd => {
                 if (file.state != .file_read and file.state != .dir_read) {
@@ -206,15 +204,15 @@ pub const UxnFile = struct {
                     const byte_res = file.file.?.reader().readByte();
                     var res: u16 = 0;
                     if (byte_res) |read_byte| {
-                        device.data[port] = read_byte;
+                        dev.data[port] = read_byte;
                     } else |_| {
                         res = 1;
                     }
-                    device.poke16(0x2, res);
+                    dev.poke16(0x2, res);
                 }
             },
             else => {},
         }
-        return device.data[port];
+        return dev.data[port];
     }
 };

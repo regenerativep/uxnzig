@@ -11,67 +11,59 @@ pub const EvalErrorData = struct {
     working: bool,
 };
 
-pub fn Stack(comptime max_len: comptime_int) type {
-    return struct {
-        pub const LenInt = std.math.IntFittingRange(0, max_len - 1);
-        pub const MaxLen = max_len;
+pub const Stack = struct {
+    const StackSize = 255;
 
-        len: LenInt = 0,
-        data: [max_len]u8 = [_]u8{0} ** max_len,
+    len: u8 = 0,
+    data: [StackSize]u8 = undefined,
 
-        const Self = @This();
-        pub inline fn push(self: *Self, use_short: bool, value: u32) !void {
-            if (use_short) {
-                if (self.len > MaxLen - 2) return error.StackOverflow;
-                self.data[self.len] = @truncate(u8, value >> 8);
-                self.data[self.len + 1] = @truncate(u8, value);
-                self.len += 2;
-            } else {
-                if (self.len > MaxLen - 1) return error.StackOverflow;
-                self.data[self.len] = @truncate(u8, value);
-                self.len += 1;
-            }
+    const Self = @This();
+    pub inline fn push(self: *Self, use_short: bool, value: u32) !void {
+        if (use_short) {
+            if (self.len > StackSize - 2) return error.StackOverflow;
+            self.data[self.len] = @truncate(u8, value >> 8);
+            self.data[self.len + 1] = @truncate(u8, value);
+            self.len += 2;
+        } else {
+            if (self.len > StackSize - 1) return error.StackOverflow;
+            self.data[self.len] = @truncate(u8, value);
+            self.len += 1;
         }
-        pub inline fn pop(self: *Self, sp: *LenInt, use_short: bool, register: *u32) !void {
-            if (use_short) {
-                if (sp.* < 2) return error.StackUnderflow;
-                register.* = @as(u32, self.data[sp.* - 1]) |
-                    (@as(u32, self.data[sp.* - 2]) << 8);
-                sp.* -= 2;
-            } else {
-                if (sp.* < 1) return error.StackUnderflow;
-                register.* = @as(u32, self.data[sp.* - 1]);
-                sp.* -= 1;
-            }
+    }
+    pub inline fn pop(self: *Self, sp: *u8, use_short: bool, register: *u32) !void {
+        if (use_short) {
+            if (sp.* < 2) return error.StackUnderflow;
+            register.* = @as(u32, self.data[sp.* - 1]) |
+                (@as(u32, self.data[sp.* - 2]) << 8);
+            sp.* -= 2;
+        } else {
+            if (sp.* < 1) return error.StackUnderflow;
+            register.* = @as(u32, self.data[sp.* - 1]);
+            sp.* -= 1;
         }
+    }
 
-        pub fn write(self: *Self, writer: anytype, name: []const u8) !void {
-            try writer.print("<{s}>", .{name});
-            var i: usize = 0;
-            while (i < self.len) : (i += 1) try writer.print(" {x}", .{self.data[i]});
-            if (i == 0) try writer.writeAll(" empty");
-            try writer.writeByte('\n');
-        }
-    };
-}
-
-pub const DeviceContext = struct {
-    uxn: *Uxn,
-    index: usize,
+    pub fn write(self: *Self, writer: anytype, name: []const u8) !void {
+        try writer.print("<{s}>", .{name});
+        var i: usize = 0;
+        while (i < self.len) : (i += 1) try writer.print(" {x}", .{self.data[i]});
+        if (i == 0) try writer.writeAll(" empty");
+        try writer.writeByte('\n');
+    }
 };
 
 pub const Device = struct {
     data: [16]u8 = [_]u8{0} ** 16,
-    dei: fn (context: DeviceContext, device: *Device, port: u8) u8 = nilDei,
-    deo: fn (context: DeviceContext, device: *Device, port: u8) void = nilDeo,
+    dei: fn (u: *Uxn, device: *Device, port: u8) u8 = nilDei,
+    deo: fn (u: *Uxn, device: *Device, port: u8) void = nilDeo,
     state: *anyopaque = undefined,
 
-    fn nilDei(context: DeviceContext, device: *Device, port: u8) u8 {
-        _ = context;
+    fn nilDei(u: *Uxn, device: *Device, port: u8) u8 {
+        _ = u;
         return device.data[port];
     }
-    fn nilDeo(context: DeviceContext, device: *Device, port: u8) void {
-        _ = context;
+    fn nilDeo(u: *Uxn, device: *Device, port: u8) void {
+        _ = u;
         _ = device;
         _ = port;
     }
@@ -133,37 +125,37 @@ pub const UxnOp = enum(u5) {
 inline fn devr(
     use_short: bool,
     register: *u32,
-    context: DeviceContext,
+    u: *Uxn,
     device: *Device,
     x: u32,
 ) void {
-    register.* = device.dei(context, device, @truncate(u8, x & 0x0f));
+    register.* = device.dei(u, device, @truncate(u8, x & 0x0f));
     if (use_short) {
         register.* = (register.* << 8) |
-            device.dei(context, device, @truncate(u8, (x + 1) & 0x0f));
+            device.dei(u, device, @truncate(u8, (x + 1) & 0x0f));
     }
 }
 inline fn devw8(
-    context: DeviceContext,
+    u: *Uxn,
     device: *Device,
     x: u32,
     y: u32,
 ) void {
     device.data[x & 0xf] = @truncate(u8, y);
-    device.deo(context, device, @truncate(u8, x & 0x0f));
+    device.deo(u, device, @truncate(u8, x & 0x0f));
 }
 inline fn devw(
     use_short: bool,
-    context: DeviceContext,
+    u: *Uxn,
     device: *Device,
     x: u32,
     y: u32,
 ) void {
     if (use_short) {
-        devw8(context, device, x, y >> 8);
-        devw8(context, device, x + 1, y);
+        devw8(u, device, x, y >> 8);
+        devw8(u, device, x + 1, y);
     } else {
-        devw8(context, device, x, y);
+        devw8(u, device, x, y);
     }
 }
 inline fn warp(
@@ -185,12 +177,10 @@ inline fn warp(
 }
 
 pub const Uxn = struct {
-    pub const UxnStack = Stack(255);
-
     ram: []u8,
     dev: [16]Device,
-    wst: UxnStack = .{},
-    rst: UxnStack = .{},
+    wst: Stack = .{},
+    rst: Stack = .{},
 
     inline fn poke(self: *Uxn, use_short: bool, x: u32, y: u32) void {
         if (use_short) {
@@ -214,10 +204,10 @@ pub const Uxn = struct {
         var b: u32 = undefined;
         var c: u32 = undefined;
 
-        var src: *UxnStack = undefined;
-        var klen: UxnStack.LenInt = undefined;
-        var sp: *UxnStack.LenInt = undefined;
-        var dst: *UxnStack = undefined;
+        var src: *Stack = undefined;
+        var klen: u8 = undefined;
+        var sp: *u8 = undefined;
+        var dst: *Stack = undefined;
         var limit: u32 = UxnLimit;
         var pc = pc_start;
         while (true) {
@@ -364,15 +354,13 @@ pub const Uxn = struct {
                 },
                 .DEI => {
                     try src.pop(sp, false, &a);
-                    const ctx = DeviceContext{ .uxn = self, .index = a >> 4 };
-                    devr(use_short, &b, ctx, &self.dev[ctx.index], a);
+                    devr(use_short, &b, self, &self.dev[a >> 4], a);
                     try src.push(use_short, b);
                 },
                 .DEO => {
                     try src.pop(sp, false, &a);
                     try src.pop(sp, use_short, &b);
-                    const ctx = DeviceContext{ .uxn = self, .index = a >> 4 };
-                    devw(use_short, ctx, &self.dev[ctx.index], a, b);
+                    devw(use_short, self, &self.dev[a >> 4], a, b);
                 },
 
                 .ADD => {
